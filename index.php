@@ -1,0 +1,208 @@
+<?php
+/**
+ * ControlMaq - Control de Alquiler de Máquinas
+ */
+session_start();
+
+require_once __DIR__ . '/config.php';
+
+class Auth {
+    public static function login($id, $nom, $rol) {
+        $_SESSION['usuario_id'] = $id;
+        $_SESSION['nombre'] = $nom;
+        $_SESSION['rol'] = $rol;
+    }
+    public static function estaLogueado() {
+        return isset($_SESSION['usuario_id']);
+    }
+    public static function logout() {
+        session_unset();
+        session_destroy();
+        header("Location: ./");
+        exit;
+    }
+}
+
+if (isset($_GET['logout'])) { Auth::logout(); }
+
+$login_error = "";
+$request_method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+if ($request_method === 'POST' && isset($_POST['user_login'])) {
+    $user = $_POST['user_login'];
+    $pass = $_POST['password'];
+    $st = $pdo->prepare("SELECT * FROM usuarios WHERE user_login = ? LIMIT 1");
+    $st->execute([$user]);
+    $u = $st->fetch();
+    if ($u && password_verify($pass, $u['password_hash'])) {
+        Auth::login($u['id'], $u['nombre'], $u['rol']);
+        if ($u['rol'] === 'admin') {
+            header("Location: panel.php");
+        } else {
+            header("Location: ./");
+        }
+        exit;
+    } else {
+        $login_error = "Credenciales incorrectas";
+    }
+}
+
+$logueado = Auth::estaLogueado();
+$es_admin = isset($_SESSION['rol']) && $_SESSION['rol'] === 'admin';
+$nombre = $_SESSION['nombre'] ?? 'Usuario';
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ControlMaq</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root { --primary: #25d366; --bg-dark: #0b141a; --header: #202c33; --msg-in: #202c33; --msg-out: #005c4b; --text: #e9edef; }
+        * { box-sizing: border-box; font-family: 'Outfit', sans-serif; -webkit-tap-highlight-color: transparent; }
+        
+        html, body { 
+            height: 100%; min-height: 100vh;
+            margin: 0; padding: 0; background: var(--bg-dark); color: var(--text);
+        }
+        
+        #login-overlay { 
+            position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 10000; 
+            display: <?php echo $logueado ? 'none' : 'flex'; ?>; 
+            align-items: center; justify-content: center; padding: 20px;
+        }
+        .login-card { background: #111b21; padding: 2rem; border-radius: 1rem; width: 100%; max-width: 320px; text-align: center; border: 1px solid #2a3942; }
+        .login-card input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #333; background: #2a3942; color: white; border-radius: 8px; font-size: 16px; }
+        .login-card button { width: 100%; padding: 12px; background: var(--primary); border: none; font-weight: 600; cursor: pointer; border-radius: 8px; font-size: 1rem; }
+        
+        header { 
+            background: var(--header); padding: 12px 15px; 
+            display: flex; align-items: center; justify-content: space-between; 
+            border-bottom: 1px solid #333;
+        }
+        
+        #chat { 
+            height: calc(100vh - 130px); overflow-y: auto; padding: 15px; 
+            display: flex; flex-direction: column; gap: 10px; 
+        }
+        .msg { padding: 10px 14px; border-radius: 10px; max-width: 85%; font-size: 0.9rem; word-wrap: break-word; }
+        .in { background: var(--msg-in); align-self: flex-start; }
+        .out { background: var(--msg-out); align-self: flex-end; }
+        
+        .footer-bar { 
+            background: var(--header); padding: 10px 12px; 
+            display: flex; gap: 10px; align-items: center;
+        }
+        .input-wrap { flex: 1; background: #2a3942; border-radius: 25px; padding: 2px 15px; display: flex; align-items: center; }
+        #msg-input { flex: 1; background: transparent; border: none; color: white; padding: 10px; outline: none; font-size: 16px; }
+        .btn-send { width: 42px; height: 42px; background: var(--primary); color: #0b141a; border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    </style>
+</head>
+<body>
+    <div id="login-overlay">
+        <form class="login-card" method="POST">
+            <i class="fas fa-tractor" style="font-size: 2.5rem; color: var(--primary); margin-bottom: 10px;"></i>
+            <h2 style="color:var(--primary); margin: 0 0 15px 0;">ControlMaq</h2>
+            <?php if ($login_error): ?><div style="color:#ff5e5e; font-size:0.8rem; margin-bottom:10px;"><?php echo $login_error; ?></div><?php endif; ?>
+            <input name="user_login" placeholder="Usuario" required autocomplete="username">
+            <input name="password" type="password" placeholder="Contraseña" required autocomplete="current-password">
+            <button type="submit">INGRESAR</button>
+        </form>
+    </div>
+
+    <?php if ($logueado): ?>
+    <header>
+        <div style="display:flex; align-items:center; gap:12px;">
+            <div style="width:38px; height:38px; background:#008069; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:600;"><?php echo strtoupper(substr($nombre, 0, 2)); ?></div>
+            <div><div style="font-weight:600; font-size:0.95rem;"><?php echo htmlspecialchars($nombre); ?></div><div style="color:var(--primary); font-size:0.75rem;"><?php echo $es_admin ? 'Admin' : 'Empleado'; ?></div></div>
+        </div>
+        <div style="display:flex; align-items:center; gap:15px;">
+            <?php if ($es_admin): ?>
+            <a href="panel.php" style="color:var(--primary); font-size:1.2rem;"><i class="fas fa-th-large"></i></a>
+            <?php endif; ?>
+            <a href="?logout=1" style="color:#8696a0;"><i class="fas fa-sign-out-alt"></i></a>
+        </div>
+    </header>
+
+    <div id="chat">
+        <?php if ($es_admin): ?>
+        <div class="msg in">
+            ¡Hola <?php echo htmlspecialchars(explode(' ', $nombre)[0]); ?>! 👋<br><br>
+            Comandos disponibles:<br>
+            • <i>"Resumen" - Balance de hoy</i><br>
+            • <i>"Mis trabajos" - Ver trabajos de hoy</i>
+        </div>
+        <?php else: ?>
+        <div class="msg in">
+            ¡Hola <?php echo htmlspecialchars(explode(' ', $nombre)[0]); ?>! 👋<br><br>
+            Registrá tus actividades:<br>
+            • <i>"Trabajé 8 horas en campo de Juan"</i><br>
+            • <i>"Gasté 200000 en gasoil"</i><br>
+            • <i>"Resumen"</i>
+        </div>
+        <?php endif; ?>
+    </div>
+
+    <div class="footer-bar">
+        <button id="voice-btn" class="btn-send" style="background:none; color:var(--primary); font-size:1.4rem;"><i class="fas fa-microphone"></i></button>
+        <div class="input-wrap">
+            <input id="msg-input" placeholder="Escribe un mensaje..." onkeypress="if(event.key==='Enter') send()">
+        </div>
+        <button onclick="send()" class="btn-send"><i class="fas fa-paper-plane"></i></button>
+    </div>
+
+    <script>
+        const msgInput = document.getElementById('msg-input');
+        const voiceBtn = document.getElementById('voice-btn');
+
+        const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (Recognition) {
+            const rec = new Recognition();
+            rec.lang = 'es-ES';
+            rec.continuous = false;
+
+            voiceBtn.onclick = () => {
+                rec.start();
+                voiceBtn.style.color = '#ff5e5e';
+            };
+
+            rec.onresult = (e) => {
+                msgInput.value = e.results[0][0].transcript;
+                send();
+            };
+
+            rec.onend = () => {
+                voiceBtn.style.color = 'var(--primary)';
+            };
+        } else {
+            voiceBtn.style.display = 'none';
+        }
+
+        async function send() {
+            const i = document.getElementById('msg-input'), t = i.value.trim(); 
+            if(!t) return;
+            i.value = ''; 
+            add(t, 'out');
+            try {
+                const r = await fetch('api/webhook.php', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ text: { body: t } }] } }] }] })
+                });
+                const d = await r.json(); 
+                add(d.mensaje || d.error || 'Error', 'in');
+            } catch (e) { 
+                add("Error de servidor", "in"); 
+            }
+        }
+        function add(t, c) {
+            const d = document.getElementById('chat'), m = document.createElement('div');
+            m.className = 'msg ' + c; m.innerText = t; d.appendChild(m); 
+            d.scrollTop = d.scrollHeight;
+        }
+    </script>
+    <?php endif; ?>
+</body>
+</html>
