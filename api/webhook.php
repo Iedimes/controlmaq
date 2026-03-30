@@ -64,6 +64,7 @@ function buscarMaquina($texto, $pdo) {
 try {
     $u_id = $_SESSION['usuario_id'] ?? null;
     $u_nom = $_SESSION['nombre'] ?? 'Usuario';
+    $u_rol = $_SESSION['rol'] ?? 'empleado';
     
     if (!$u_id) {
         echo json_encode(["status" => "error", "mensaje" => "Sesión expirada"]);
@@ -107,6 +108,97 @@ try {
     $texto = normalizar($msg);
     $resp = "";
     $read = false;
+
+    // === COMANDOS DE ADMIN ===
+    if ($u_rol === 'admin') {
+        // Eliminar obra
+        if (preg_match('/eliminar.*obra/', $texto)) {
+            preg_match('/eliminar.*obra\s+(.+)/i', $msg, $m);
+            if (!empty($m[1])) {
+                $nombre_buscar = trim($m[1]);
+                $st = $pdo->prepare("SELECT id FROM obras WHERE nombre LIKE ? LIMIT 1");
+                $st->execute(["%$nombre_buscar%"]);
+                $obra = $st->fetch();
+                if ($obra) {
+                    // Verificar si tiene trabajos
+                    $st = $pdo->prepare("SELECT COUNT(*) FROM trabajos WHERE obra_id = ?");
+                    $st->execute([$obra['id']]);
+                    if ($st->fetchColumn() > 0) {
+                        $resp = "❌ No se puede eliminar. La obra '$nombre_buscar' tiene trabajos registrados.";
+                    } else {
+                        $pdo->prepare("DELETE FROM obras WHERE id = ?")->execute([$obra['id']]);
+                        $resp = "✅ Obra eliminada: $nombre_buscar";
+                    }
+                } else {
+                    $resp = "❌ No encontré el obra: $nombre_buscar";
+                }
+                echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
+                exit;
+            }
+        }
+        
+        // Eliminar máquina
+        if (preg_match('/eliminar.*maquina/', $texto)) {
+            preg_match('/eliminar.*maquina\s+(.+)/i', $msg, $m);
+            if (!empty($m[1])) {
+                $nombre_buscar = trim($m[1]);
+                $st = $pdo->prepare("SELECT id FROM maquinas WHERE nombre LIKE ? LIMIT 1");
+                $st->execute(["%$nombre_buscar%"]);
+                $maq = $st->fetch();
+                if ($maq) {
+                    // Verificar si tiene trabajos
+                    $st = $pdo->prepare("SELECT COUNT(*) FROM trabajos WHERE maquina_id = ?");
+                    $st->execute([$maq['id']]);
+                    if ($st->fetchColumn() > 0) {
+                        $resp = "❌ No se puede eliminar. La máquina '$nombre_buscar' tiene trabajos registrados.";
+                    } else {
+                        $pdo->prepare("DELETE FROM maquinas WHERE id = ?")->execute([$maq['id']]);
+                        $resp = "✅ Máquina eliminada: $nombre_buscar";
+                    }
+                } else {
+                    $resp = "❌ No encontré la máquina: $nombre_buscar";
+                }
+                echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
+                exit;
+            }
+        }
+        
+        // Nueva obra
+        if (preg_match('/(nueva|crear).*obra/', $texto)) {
+            preg_match('/(nueva|crear).*obra\s+(.+)/i', $msg, $m);
+            if (!empty($m[2])) {
+                $nombre_nueva = trim($m[2]);
+                $st = $pdo->prepare("SELECT id FROM obras WHERE nombre = ?");
+                $st->execute([$nombre_nueva]);
+                if ($st->fetch()) {
+                    $resp = "❌ Ya existe el obra: $nombre_nueva";
+                } else {
+                    $pdo->prepare("INSERT INTO obras (cliente_id, nombre, estado) VALUES (1, ?, 'activa')")->execute([$nombre_nueva]);
+                    $resp = "✅ Obra creada: $nombre_nueva";
+                }
+                echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
+                exit;
+            }
+        }
+        
+        // Nueva máquina
+        if (preg_match('/(nueva|crear).*maquina/', $texto)) {
+            preg_match('/(nueva|crear).*maquina\s+(.+)/i', $msg, $m);
+            if (!empty($m[2])) {
+                $nombre_nueva = trim($m[2]);
+                $st = $pdo->prepare("SELECT id FROM maquinas WHERE nombre = ?");
+                $st->execute([$nombre_nueva]);
+                if ($st->fetch()) {
+                    $resp = "❌ Ya existe la máquina: $nombre_nueva";
+                } else {
+                    $pdo->prepare("INSERT INTO maquinas (nombre, activo) VALUES (?, 1)")->execute([$nombre_nueva]);
+                    $resp = "✅ Máquina creada: $nombre_nueva";
+                }
+                echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
+                exit;
+            }
+        }
+    }
 
     // === PROCESAR HORÓMETRO ===
     if (isset($_SESSION['ultima_foto'])) {
@@ -210,6 +302,64 @@ if (($confirm['type'] ?? '') === 'combustible' && ($confirm['step'] ?? '') === '
             
             echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
             exit;
+        }
+        
+        // Cambio de máquina - seleccionar obra
+        if (($confirm['type'] ?? '') === 'cambio_maquina' && ($confirm['step'] ?? '') === 'maquina') {
+            $maquina_id = buscarMaquina($texto, $pdo);
+            if ($maquina_id) {
+                $confirm['maquina_id'] = $maquina_id;
+                $confirm['step'] = 'obra';
+                $_SESSION['confirm_data'] = json_encode($confirm);
+                
+                $st = $pdo->prepare("SELECT nombre FROM maquinas WHERE id = ?");
+                $st->execute([$maquina_id]);
+                $maq_nombre = $st->fetchColumn();
+                
+                $st = $pdo->query("SELECT nombre FROM obras WHERE estado = 'activa' ORDER BY nombre");
+                $obras = $st->fetchAll(PDO::FETCH_COLUMN);
+                
+                $resp = "🔄 *Cambio a: $maq_nombre*\n\n";
+                $resp .= "¿En qué obra?\n\n";
+                $resp .= implode("\n", array_map(fn($o) => "• $o", $obras));
+                
+                echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
+                exit;
+            } else {
+                $st = $pdo->query("SELECT nombre FROM maquinas WHERE activo = 1 ORDER BY nombre");
+                $maqs = $st->fetchAll(PDO::FETCH_COLUMN);
+                $resp = "No encontré esa máquina. Elegí:\n" . implode("\n", array_map(fn($m) => "• $m", $maqs));
+                echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
+                exit;
+            }
+        }
+        
+        // Cambio de máquina - confirmar obra
+        if (($confirm['type'] ?? '') === 'cambio_maquina' && ($confirm['step'] ?? '') === 'obra') {
+            $obra_id = buscarObra($texto, $pdo);
+            if ($obra_id) {
+                $confirm['obra_id'] = $obra_id;
+                $confirm['step'] = 'confirmar';
+                $_SESSION['confirm_data'] = json_encode($confirm);
+                
+                $st = $pdo->prepare("SELECT nombre FROM maquinas WHERE id = ?");
+                $st->execute([$confirm['maquina_id']]);
+                $maq_nombre = $st->fetchColumn();
+                
+                $st = $pdo->prepare("SELECT nombre FROM obras WHERE id = ?");
+                $st->execute([$obra_id]);
+                $obra_nombre = $st->fetchColumn();
+                
+                $resp = "🔄 *Confirmar Cambio*\n\n🚜 $maq_nombre\n🏗️ $obra_nombre\n\nRespondé \"SI\" para confirmar.";
+                echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
+                exit;
+            } else {
+                $st = $pdo->query("SELECT nombre FROM obras WHERE estado = 'activa' ORDER BY nombre");
+                $obras = $st->fetchAll(PDO::FETCH_COLUMN);
+                $resp = "No encontré esa obra. Elegí:\n" . implode("\n", array_map(fn($o) => "• $o", $obras));
+                echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
+                exit;
+            }
         }
         
         if ($es_trabajo) {
@@ -329,6 +479,26 @@ if (($confirm['type'] ?? '') === 'combustible' && ($confirm['step'] ?? '') === '
             unset($_SESSION['confirm_data']);
             echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => true, "lang" => "es"]);
             exit;
+        } elseif (($confirm['type'] ?? '') === 'cambio_maquina') {
+            $st = $pdo->prepare("SELECT nombre FROM maquinas WHERE id = ?");
+            $st->execute([$confirm['maquina_id']]);
+            $maq_nombre = $st->fetchColumn();
+            
+            $st = $pdo->prepare("SELECT nombre FROM obras WHERE id = ?");
+            $st->execute([$confirm['obra_id']]);
+            $obra_nombre = $st->fetchColumn();
+            
+            // Guardar en memoria la máquina y obra actual
+            $st = $pdo->prepare("INSERT INTO memoria (empleado_id, clave, valor) VALUES (?, 'maquina_actual', ?) ON DUPLICATE KEY UPDATE valor = ?");
+            $st->execute([$u_id, $confirm['maquina_id'], $confirm['maquina_id']]);
+            
+            $st = $pdo->prepare("INSERT INTO memoria (empleado_id, clave, valor) VALUES (?, 'obra_actual', ?) ON DUPLICATE KEY UPDATE valor = ?");
+            $st->execute([$u_id, $confirm['obra_id'], $confirm['obra_id']]);
+            
+            $resp = "✅ *Cambio registrado*\n\n🚜 $maq_nombre\n🏗️ $obra_nombre\n\nAhora las horas que registres serán con esta máquina y obra.";
+            unset($_SESSION['confirm_data']);
+            echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => true, "lang" => "es"]);
+            exit;
         }
     }
     
@@ -347,37 +517,95 @@ if (($confirm['type'] ?? '') === 'combustible' && ($confirm['step'] ?? '') === '
 
     // === COMANDOS ===
     if (preg_match('/resum/', $texto)) {
-        $st = $pdo->prepare("SELECT SUM(horas_trabajadas) as h, SUM(monto) as m FROM trabajos WHERE fecha = CURDATE() AND empleado_id = ?");
-        $st->execute([$u_id]);
-        $r = $st->fetch();
-        
-        $st = $pdo->prepare("SELECT SUM(monto) as g FROM gastos WHERE fecha = CURDATE() AND empleado_id = ?");
-        $st->execute([$u_id]);
-        $g = $st->fetch();
-        
-        $horas = $r['h'] ?? 0;
-        $trabajos = $r['m'] ?? 0;
-        $gastos = $g['g'] ?? 0;
-        $neto = $trabajos - $gastos;
-        
-        $resp = "📊 *Resumen de Hoy*\n\n⏱️ Horas: $horas\n💰 Trabajos: " . number_format($trabajos, 0, ',', '.') . " Gs\n💸 Gastos: " . number_format($gastos, 0, ',', '.') . " Gs\n✅ Neto: " . number_format($neto, 0, ',', '.') . " Gs";
-        echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => true, "lang" => "es"]);
-        exit;
+        if ($u_rol === 'admin') {
+            // Resumen general para admin
+            $st = $pdo->query("SELECT SUM(horas_trabajadas) as h, SUM(monto) as m FROM trabajos WHERE fecha = CURDATE()");
+            $r = $st->fetch();
+            
+            $st = $pdo->query("SELECT SUM(monto) as g FROM gastos WHERE fecha = CURDATE()");
+            $g = $st->fetch();
+            
+            $st = $pdo->query("SELECT SUM(litros) as c FROM combustibles WHERE fecha = CURDATE()");
+            $c = $st->fetch();
+            
+            $horas = $r['h'] ?? 0;
+            $trabajos = $r['m'] ?? 0;
+            $gastos = $g['g'] ?? 0;
+            $combustible = $c['c'] ?? 0;
+            $neto = $trabajos - $gastos;
+            
+            $resp = "📊 *Resumen GENERAL de Hoy*\n\n";
+            $resp .= "⏱️ Horas: $horas\n";
+            $resp .= "💰 Trabajos: " . number_format($trabajos, 0, ',', '.') . " Gs\n";
+            $resp .= "💸 Gastos: " . number_format($gastos, 0, ',', '.') . " Gs\n";
+            $resp .= "⛽ Combustible: " . number_format($combustible, 0, ',', '.') . " L\n";
+            $resp .= "✅ Neto: " . number_format($neto, 0, ',', '.') . " Gs";
+            
+            // Agregar detalle por empleado
+            $st = $pdo->query("SELECT u.nombre, SUM(t.horas_trabajadas) as h, SUM(t.monto) as m 
+                FROM trabajos t 
+                LEFT JOIN usuarios u ON t.empleado_id = u.id 
+                WHERE t.fecha = CURDATE() 
+                GROUP BY u.nombre");
+            $por_empleado = $st->fetchAll();
+            if (!empty($por_empleado)) {
+                $resp .= "\n\n👥 *Por Empleado:*";
+                foreach ($por_empleado as $e) {
+                    $resp .= "\n• {$e['nombre']}: {$e['h']}hs = " . number_format($e['m'], 0, ',', '.') . " Gs";
+                }
+            }
+            
+            echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => true, "lang" => "es"]);
+            exit;
+        } else {
+            // Resumen personal para empleado
+            $st = $pdo->prepare("SELECT SUM(horas_trabajadas) as h, SUM(monto) as m FROM trabajos WHERE fecha = CURDATE() AND empleado_id = ?");
+            $st->execute([$u_id]);
+            $r = $st->fetch();
+            
+            $st = $pdo->prepare("SELECT SUM(monto) as g FROM gastos WHERE fecha = CURDATE() AND empleado_id = ?");
+            $st->execute([$u_id]);
+            $g = $st->fetch();
+            
+            $horas = $r['h'] ?? 0;
+            $trabajos = $r['m'] ?? 0;
+            $gastos = $g['g'] ?? 0;
+            $neto = $trabajos - $gastos;
+            
+            $resp = "📊 *Resumen de Hoy*\n\n⏱️ Horas: $horas\n💰 Trabajos: " . number_format($trabajos, 0, ',', '.') . " Gs\n💸 Gastos: " . number_format($gastos, 0, ',', '.') . " Gs\n✅ Neto: " . number_format($neto, 0, ',', '.') . " Gs";
+            echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => true, "lang" => "es"]);
+            exit;
+        }
     }
     
-    if (preg_match('/(mis trabaj|trabajos mios)/', $texto)) {
-        $st = $pdo->prepare("SELECT t.*, o.nombre as obra, m.nombre as maquina FROM trabajos t LEFT JOIN obras o ON t.obra_id = o.id LEFT JOIN maquinas m ON t.maquina_id = m.id WHERE t.empleado_id = ? AND t.fecha = CURDATE() ORDER BY t.id DESC");
-        $st->execute([$u_id]);
-        $mis_trabajos = $st->fetchAll();
-        
-        if (empty($mis_trabajos)) {
-            $resp = "No tenés trabajos registrados hoy.";
+    if (preg_match('/(mis trabaj|trabajos mios|todos.*trabaj)/', $texto)) {
+        if ($u_rol === 'admin') {
+            $st = $pdo->query("SELECT t.*, o.nombre as obra, m.nombre as maquina, u.nombre as empleado FROM trabajos t LEFT JOIN obras o ON t.obra_id = o.id LEFT JOIN maquinas m ON t.maquina_id = m.id LEFT JOIN usuarios u ON t.empleado_id = u.id WHERE t.fecha = CURDATE() ORDER BY t.id DESC");
+            $mis_trabajos = $st->fetchAll();
+            
+            if (empty($mis_trabajos)) {
+                $resp = "No hay trabajos registrados hoy.";
+            } else {
+                $resp = "📋 *TODOS los trabajos de Hoy*\n\n";
+                foreach ($mis_trabajos as $t) {
+                    $resp .= "• {$t['empleado']}: {$t['horas_trabajadas']}hs en {$t['obra']} ({$t['maquina']}) = " . number_format($t['monto'], 0, ',', '.') . " Gs\n";
+                }
+            }
         } else {
-            $resp = "📋 *Tus trabajos de hoy*\n\n";
-            foreach ($mis_trabajos as $t) {
-                $resp .= "• {$t['horas_trabajadas']}hs en {$t['obra']} ({$t['maquina']}) = " . number_format($t['monto'], 0, ',', '.') . " Gs\n";
+            $st = $pdo->prepare("SELECT t.*, o.nombre as obra, m.nombre as maquina FROM trabajos t LEFT JOIN obras o ON t.obra_id = o.id LEFT JOIN maquinas m ON t.maquina_id = m.id WHERE t.empleado_id = ? AND t.fecha = CURDATE() ORDER BY t.id DESC");
+            $st->execute([$u_id]);
+            $mis_trabajos = $st->fetchAll();
+            
+            if (empty($mis_trabajos)) {
+                $resp = "No tenés trabajos registrados hoy.";
+            } else {
+                $resp = "📋 *Tus trabajos de hoy*\n\n";
+                foreach ($mis_trabajos as $t) {
+                    $resp .= "• {$t['horas_trabajadas']}hs en {$t['obra']} ({$t['maquina']}) = " . number_format($t['monto'], 0, ',', '.') . " Gs\n";
+                }
             }
         }
+        
         echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => true, "lang" => "es"]);
         exit;
     }
@@ -391,11 +619,29 @@ if (($confirm['type'] ?? '') === 'combustible' && ($confirm['step'] ?? '') === '
     }
     
     if (preg_match('/(ayuda|help)/', $texto)) {
-        $resp = "📖 *Comandos*\n\n• \"trabaje 8 horas\" - Registrar\n• \"gasté 200000\" - Registrar gasto\n• \"resumen\" - Ver balance\n• \"mis trabajos\" - Ver mis trabajos\n• 📷 - Enviar foto del horómetro";
+        $resp = "📖 *Comandos*\n\n• \"trabaje 8 horas\" - Registrar\n• \"gasté 200000\" - Registrar gasto\n• \"cargué 300 litros\" - Cargar combustible\n• \"cambié de máquina\" - Cambiar máquina/obra\n• \"llovió\" / \"no trabajé\" - Registrar incidente\n• \"resumen\" - Ver balance\n• \"mis trabajos\" - Ver mis trabajos\n• 📷 - Enviar foto del horómetro";
         echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
         exit;
     }
 
+    // === CAMBIAR DE MÁQUINA/OBRA ===
+    if (preg_match('/cambi[aeé]|cambio.*maquina|nueva.*maquina|ahora.*maquina/', $texto)) {
+        $_SESSION['confirm_data'] = json_encode([
+            'type' => 'cambio_maquina',
+            'step' => 'maquina'
+        ]);
+        
+        $st = $pdo->query("SELECT nombre FROM maquinas WHERE activo = 1 ORDER BY nombre");
+        $maqs = $st->fetchAll(PDO::FETCH_COLUMN);
+        
+        $resp = "🔄 *Cambio de Máquina*\n\n";
+        $resp .= "¿A qué máquina te cambiaste?\n\n";
+        $resp .= implode("\n", array_map(fn($m) => "• $m", $maqs));
+        
+        echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
+        exit;
+    }
+    
     // === REGISTRAR TRABAJO ===
     if (preg_match('/trabaj[aeé]/', $texto)) {
         preg_match('/(\d+(?:[.,]\d+)?)\s*(?:horas?|hs?|hr)/', $msg, $horas_match);
