@@ -206,7 +206,7 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
         <div class="user-info">
             <button onclick="toggleChat()" style="background:none;border:none;color:var(--primary);font-size:1.2rem;cursor:pointer;margin-right:10px;"><i class="fas fa-comments"></i></button>
             <span style="font-size: 0.85rem;"><?php echo htmlspecialchars($nombre); ?></span>
-            <a href="?logout=1" style="color: #8696a0;"><i class="fas fa-sign-out-alt"></i></a>
+            <a href="index.php?logout=1" style="color: #8696a0;"><i class="fas fa-sign-out-alt"></i></a>
         </div>
     </header>
 
