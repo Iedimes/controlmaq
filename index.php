@@ -28,21 +28,43 @@ if (isset($_GET['logout'])) { Auth::logout(); }
 $login_error = "";
 $request_method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
 if ($request_method === 'POST' && isset($_POST['user_login'])) {
-    $user = $_POST['user_login'];
+    $user = trim($_POST['user_login']);
     $pass = $_POST['password'];
-    $st = $pdo->prepare("SELECT * FROM usuarios WHERE user_login = ? LIMIT 1");
-    $st->execute([$user]);
-    $u = $st->fetch();
-    if ($u && password_verify($pass, $u['password_hash'])) {
-        Auth::login($u['id'], $u['nombre'], $u['rol']);
-        if ($u['rol'] === 'admin') {
-            header("Location: panel.php");
-        } else {
-            header("Location: ./");
-        }
-        exit;
+    
+    if (!$user || !$pass) {
+        $login_error = "Usuario y contraseña requeridos";
     } else {
-        $login_error = "Credenciales incorrectas";
+        $st = $pdo->prepare("SELECT * FROM usuarios WHERE user_login = ? LIMIT 1");
+        $st->execute([$user]);
+        $u = $st->fetch();
+        
+        if ($u && password_verify($pass, $u['password_hash'])) {
+            Auth::login($u['id'], $u['nombre'], $u['rol']);
+            
+            // Registrar asistencia
+            $st = $pdo->prepare("INSERT INTO asistencia (empleado_id, fecha, presente, login_hora) VALUES (?, CURDATE(), 1, CURTIME()) ON DUPLICATE KEY UPDATE presente = 1, login_hora = CURTIME()");
+            $st->execute([$u['id']]);
+            
+            if ($u['rol'] === 'admin') {
+                header("Location: panel.php");
+            } else {
+                header("Location: ./");
+            }
+            exit;
+        } elseif (!$u) {
+            // Auto-registrar usuario nuevo
+            $hash = password_hash($pass, PASSWORD_DEFAULT);
+            $nombre = ucfirst($user); // Usar el login como nombre
+            $st = $pdo->prepare("INSERT INTO usuarios (nombre, user_login, password_hash, rol) VALUES (?, ?, ?, 'empleado')");
+            $st->execute([$nombre, $user, $hash]);
+            
+            $nuevo_id = $pdo->lastInsertId();
+            Auth::login($nuevo_id, $nombre, 'empleado');
+            header("Location: ./");
+            exit;
+        } else {
+            $login_error = "Credenciales incorrectas";
+        }
     }
 }
 
@@ -137,15 +159,21 @@ $nombre = $_SESSION['nombre'] ?? 'Usuario';
         <div class="msg in">
             ¡Hola <?php echo htmlspecialchars(explode(' ', $nombre)[0]); ?>! 👋<br><br>
             Registrá tus actividades:<br>
-            • <i>"Trabajé 8 horas en campo de Juan"</i><br>
-            • <i>"Gasté 200000 en gasoil"</i><br>
-            • <i>"Resumen"</i>
+            • <i>"Trabajé 8 horas"</i> - Registrar horas<br>
+            • <i>"Gasté 200000"</i> - Registrar gasto<br>
+            • <i>"Cargué 300 litros"</i> - Cargar combustible<br>
+            • <i>"Llovió hoy"</i> - Registrar lluvia<br>
+            • <i>"No trabajé"</i> - Registrar ausencia<br>
+            • <i>"Resumen"</i> - Ver balance del día<br>
+            • 📷 - Enviar foto del horómetro
         </div>
         <?php endif; ?>
     </div>
 
     <div class="footer-bar">
         <button id="voice-btn" class="btn-send" style="background:none; color:var(--primary); font-size:1.4rem;"><i class="fas fa-microphone"></i></button>
+        <label for="img-input" style="color:var(--primary); font-size:1.2rem; cursor:pointer;"><i class="fas fa-camera"></i></label>
+        <input type="file" id="img-input" accept="image/*" style="display:none;" onchange="sendImage()">
         <div class="input-wrap">
             <input id="msg-input" placeholder="Escribe un mensaje..." onkeypress="if(event.key==='Enter') send()">
         </div>
@@ -197,10 +225,37 @@ $nombre = $_SESSION['nombre'] ?? 'Usuario';
                 add("Error de servidor", "in"); 
             }
         }
-        function add(t, c) {
+        function add(t, c, isHtml = false) {
             const d = document.getElementById('chat'), m = document.createElement('div');
-            m.className = 'msg ' + c; m.innerText = t; d.appendChild(m); 
+            m.className = 'msg ' + c; 
+            if (isHtml) m.innerHTML = t; else m.innerText = t;
+            d.appendChild(m); 
             d.scrollTop = d.scrollHeight;
+        }
+        
+        async function sendImage() {
+            const input = document.getElementById('img-input');
+            const file = input.files[0];
+            if (!file) return;
+            
+            add('📷 Foto enviada', 'out');
+            
+            const formData = new FormData();
+            formData.append('imagen', file);
+            formData.append('type', 'image');
+            
+            try {
+                const r = await fetch('api/webhook.php', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    body: formData
+                });
+                const d = await r.json();
+                add(d.mensaje || d.error || 'Error', 'in', true);
+            } catch (e) {
+                add("Error al procesar imagen", 'in');
+            }
+            input.value = '';
         }
     </script>
     <?php endif; ?>

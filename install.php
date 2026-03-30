@@ -125,6 +125,44 @@ try {
         creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     
+    $pdo->exec("CREATE TABLE IF NOT EXISTS combustibles (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        empleado_id INT NOT NULL,
+        maquina_id INT,
+        obra_id INT,
+        fecha DATE NOT NULL,
+        litros DECIMAL(10,2) NOT NULL,
+        precio_unitario DECIMAL(10,2) DEFAULT 0,
+        monto DECIMAL(15,2) DEFAULT 0,
+        tipo ENUM('carga', 'saldo') DEFAULT 'carga',
+        creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (empleado_id) REFERENCES usuarios(id),
+        FOREIGN KEY (maquina_id) REFERENCES maquinas(id),
+        FOREIGN KEY (obra_id) REFERENCES obras(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    
+    $pdo->exec("CREATE TABLE IF NOT EXISTS incidentes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        empleado_id INT NOT NULL,
+        maquina_id INT,
+        fecha DATE NOT NULL,
+        tipo ENUM('lluvia', 'breakdown', 'mantenimiento', 'ausente') NOT NULL,
+        descripcion TEXT,
+        creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (empleado_id) REFERENCES usuarios(id),
+        FOREIGN KEY (maquina_id) REFERENCES maquinas(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    
+    $pdo->exec("CREATE TABLE IF NOT EXISTS asistencia (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        empleado_id INT NOT NULL,
+        fecha DATE NOT NULL,
+        presente TINYINT(1) DEFAULT 0,
+        login_hora TIME,
+        FOREIGN KEY (empleado_id) REFERENCES usuarios(id),
+        UNIQUE KEY unique_fecha_empleado (empleado_id, fecha)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    
     echo "✅ Tablas creadas exitosamente<br>";
     
     // Insertar datos iniciales

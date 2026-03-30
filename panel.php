@@ -15,26 +15,28 @@ $es_admin = ($_SESSION['rol'] ?? '') === 'admin';
 $usuario_id = $_SESSION['usuario_id'] ?? 0;
 $nombre = $_SESSION['nombre'] ?? 'Usuario';
 
-// Obtener quincena actual
-$quincena_actual = null;
-$st = $pdo->prepare("SELECT * FROM quincenas WHERE estado = 'abierta' ORDER BY fecha_inicio DESC LIMIT 1");
-$st->execute();
-$quincena_actual = $st->fetch();
+// Filtros
+$filtro_empleado = $_GET['empleado'] ?? '';
+$filtro_obra = $_GET['obra'] ?? '';
+$filtro_maquina = $_GET['maquina'] ?? '';
+$filtro_fecha_inicio = $_GET['fecha_inicio'] ?? date('Y-m-01');
+$filtro_fecha_fin = $_GET['fecha_fin'] ?? date('Y-m-t');
 
-// Si no hay quincena abierta, crear una
-if (!$quincena_actual) {
-    $dia_actual = date('j');
-    if ($dia_actual <= 15) {
-        $inicio = date('Y-m-01');
-        $fin = date('Y-m-15');
-    } else {
-        $inicio = date('Y-m-16');
-        $fin = date('Y-m-t');
-    }
-    $pdo->prepare("INSERT INTO quincenas (fecha_inicio, fecha_fin) VALUES (?, ?)")->execute([$inicio, $fin]);
-    $st = $pdo->prepare("SELECT * FROM quincenas WHERE estado = 'abierta' ORDER BY id DESC LIMIT 1");
-    $st->execute();
-    $quincena_actual = $st->fetch();
+// Construir query con filtros
+$where = "WHERE t.fecha BETWEEN ? AND ?";
+$params = [$filtro_fecha_inicio, $filtro_fecha_fin];
+
+if ($filtro_empleado) {
+    $where .= " AND t.empleado_id = ?";
+    $params[] = $filtro_empleado;
+}
+if ($filtro_obra) {
+    $where .= " AND t.obra_id = ?";
+    $params[] = $filtro_obra;
+}
+if ($filtro_maquina) {
+    $where .= " AND t.maquina_id = ?";
+    $params[] = $filtro_maquina;
 }
 
 // Obtener datos para la planilla
@@ -43,9 +45,9 @@ $st = $pdo->prepare("SELECT t.*, u.nombre as empleado, m.nombre as maquina, o.no
     LEFT JOIN usuarios u ON t.empleado_id = u.id 
     LEFT JOIN maquinas m ON t.maquina_id = m.id 
     LEFT JOIN obras o ON t.obra_id = o.id
-    WHERE t.fecha BETWEEN ? AND ?
+    $where
     ORDER BY t.fecha DESC, t.id DESC");
-$st->execute([$quincena_actual['fecha_inicio'], $quincena_actual['fecha_fin']]);
+$st->execute($params);
 $trabajos = $st->fetchAll();
 
 // Obtener gastos
@@ -54,19 +56,83 @@ $st = $pdo->prepare("SELECT g.*, u.nombre as empleado
     LEFT JOIN usuarios u ON g.empleado_id = u.id
     WHERE g.fecha BETWEEN ? AND ?
     ORDER BY g.fecha DESC");
-$st->execute([$quincena_actual['fecha_inicio'], $quincena_actual['fecha_fin']]);
+$st->execute([$filtro_fecha_inicio, $filtro_fecha_fin]);
 $gastos = $st->fetchAll();
+
+// Obtener combustibles
+$st = $pdo->prepare("SELECT c.*, u.nombre as empleado, m.nombre as maquina, o.nombre as obra 
+    FROM combustibles c 
+    LEFT JOIN usuarios u ON c.empleado_id = u.id
+    LEFT JOIN maquinas m ON c.maquina_id = m.id
+    LEFT JOIN obras o ON c.obra_id = o.id
+    WHERE c.fecha BETWEEN ? AND ?
+    ORDER BY c.fecha DESC");
+$st->execute([$filtro_fecha_inicio, $filtro_fecha_fin]);
+$combustibles = $st->fetchAll();
+
+$st = $pdo->prepare("SELECT i.*, u.nombre as empleado, m.nombre as maquina 
+    FROM incidentes i 
+    LEFT JOIN usuarios u ON i.empleado_id = u.id
+    LEFT JOIN maquinas m ON i.maquina_id = m.id
+    WHERE i.fecha BETWEEN ? AND ?
+    ORDER BY i.fecha DESC");
+$st->execute([$filtro_fecha_inicio, $filtro_fecha_fin]);
+$incidentes = $st->fetchAll();
+
+// Asistencia de hoy
+$st = $pdo->query("SELECT id, nombre FROM usuarios WHERE rol = 'empleado' AND activo = 1 ORDER BY nombre");
+$todos_empleados = $st->fetchAll();
+
+$st = $pdo->prepare("SELECT empleado_id, presente, login_hora FROM asistencia WHERE fecha = CURDATE()");
+$st->execute();
+$asistencia_hoy = [];
+while ($a = $st->fetch(PDO::FETCH_ASSOC)) {
+    $asistencia_hoy[$a['empleado_id']] = $a;
+}
 
 // Totales
 $total_horas = 0;
 $total_monto = 0;
 $total_gastos = 0;
+$total_combustibles = 0;
+$total_viaticos = 0;
+$total_adicionales = 0;
+$trabajos_count = count($trabajos);
 foreach ($trabajos as $t) {
     $total_horas += $t['horas_trabajadas'];
     $total_monto += $t['monto'];
+    $total_viaticos += $t['viaticos'] ?? 0;
+    $total_adicionales += $t['adicionales'] ?? 0;
 }
 foreach ($gastos as $g) {
     $total_gastos += $g['monto'];
+}
+foreach ($combustibles as $c) {
+    $total_combustibles += $c['litros'];
+}
+
+// Totales por empleado
+$por_empleado = [];
+foreach ($trabajos as $t) {
+    $eid = $t['empleado_id'];
+    if (!isset($por_empleado[$eid])) {
+        $por_empleado[$eid] = ['nombre' => $t['empleado'], 'horas' => 0, 'monto' => 0, 'viaticos' => 0, 'adicionales' => 0];
+    }
+    $por_empleado[$eid]['horas'] += $t['horas_trabajadas'];
+    $por_empleado[$eid]['monto'] += $t['monto'];
+    $por_empleado[$eid]['viaticos'] += $t['viaticos'] ?? 0;
+    $por_empleado[$eid]['adicionales'] += $t['adicionales'] ?? 0;
+}
+
+// Totales por obra
+$por_obra = [];
+foreach ($trabajos as $t) {
+    $oid = $t['obra_id'];
+    if (!isset($por_obra[$oid])) {
+        $por_obra[$oid] = ['nombre' => $t['obra'] ?? 'Sin obra', 'horas' => 0, 'monto' => 0];
+    }
+    $por_obra[$oid]['horas'] += $t['horas_trabajadas'];
+    $por_obra[$oid]['monto'] += $t['monto'];
 }
 
 // Obtener listas para filtros
@@ -211,46 +277,108 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
     </header>
 
     <div class="container">
-        <!-- Resumen de Quincena -->
+        <!-- Resumen de Período -->
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <h3>📅 Quincena: <?php echo date('d/m', strtotime($quincena_actual['fecha_inicio'])) . ' - ' . date('d/m', strtotime($quincena_actual['fecha_fin'])); ?></h3>
-                <span class="badge" style="background: var(--primary); color: #0b141a;"><?php echo strtoupper($quincena_actual['estado']); ?></span>
+                <h3>📅 Período: <?php echo date('d/m', strtotime($filtro_fecha_inicio)) . ' - ' . date('d/m', strtotime($filtro_fecha_fin)); ?></h3>
             </div>
             <div class="stats">
                 <div class="stat">
                     <div class="stat-value"><?php echo fmt($total_horas); ?></div>
-                    <div class="stat-label">Horas</div>
+                    <div class="stat-label">Horas Totales</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value"><?php echo fmt($trabajos_count); ?></div>
+                    <div class="stat-label">Trabajos</div>
                 </div>
                 <div class="stat">
                     <div class="stat-value"><?php echo fmt($total_monto); ?> Gs</div>
-                    <div class="stat-label">Total Trabajos</div>
+                    <div class="stat-label">Mano de Obra</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value"><?php echo fmt($total_viaticos); ?> Gs</div>
+                    <div class="stat-label">Viáticos</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value"><?php echo fmt($total_adicionales); ?> Gs</div>
+                    <div class="stat-label">Adicionales</div>
                 </div>
                 <div class="stat">
                     <div class="stat-value"><?php echo fmt($total_gastos); ?> Gs</div>
                     <div class="stat-label">Gastos</div>
                 </div>
                 <div class="stat" style="background: var(--primary); color: #0b141a;">
-                    <div class="stat-value" style="color: #0b141a;"><?php echo fmt($total_monto - $total_gastos); ?></div>
-                    <div class="stat-label" style="color: #0b141a;">Neto</div>
+                    <div class="stat-value" style="color: #0b141a;"><?php echo fmt($total_monto + $total_viaticos + $total_adicionales - $total_gastos); ?></div>
+                    <div class="stat-label" style="color: #0b141a;">TOTAL NETO</div>
                 </div>
             </div>
         </div>
 
         <!-- Acciones Rápidas -->
         <div class="action-bar">
-            <button class="btn" onclick="openModal('modal-trabajo')"><i class="fas fa-plus"></i> Nuevo Trabajo</button>
-            <button class="btn btn-outline" onclick="openModal('modal-gasto')"><i class="fas fa-minus"></i> Registrar Gasto</button>
+            <button class="btn" onclick="openModal('modal-trabajo')"><i class="fas fa-plus"></i> Trabajo</button>
+            <button class="btn btn-outline" onclick="openModal('modal-gasto')"><i class="fas fa-minus"></i> Gasto</button>
+            <button class="btn btn-outline" onclick="openModal('modal-obra')"><i class="fas fa-hard-hat"></i> Obras</button>
             <button class="btn btn-outline" onclick="openModal('modal-maquina')"><i class="fas fa-tractor"></i> Máquinas</button>
-            <button class="btn btn-outline" onclick="openModal('modal-cliente')"><i class="fas fa-users"></i> Clientes</button>
-            <button class="btn btn-outline" onclick="openModal('modal-empleados')"><i class="fas fa-user-friends"></i> Empleados</button>
+            <button class="btn btn-outline" onclick="openModal('modal-usuarios')"><i class="fas fa-user-cog"></i> Usuarios</button>
+            <button class="btn btn-outline" onclick="toggleFiltros()" style="background:#f39c12;border:none;"><i class="fas fa-filter"></i> Filtros</button>
+            <a href="api/exportar_excel.php?<?php echo http_build_query($_GET); ?>" class="btn btn-outline" style="background:#27ae60;border:none;text-decoration:none;"><i class="fas fa-file-excel"></i> Excel</a>
+        </div>
+
+        <!-- Filtros -->
+        <div id="filtros-panel" class="card" style="display:none;">
+            <h3>🔍 Filtros</h3>
+            <form method="GET" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">
+                <div class="form-group">
+                    <label>Empleado</label>
+                    <select name="empleado">
+                        <option value="">Todos</option>
+                        <?php foreach($empleados as $e): ?>
+                        <option value="<?php echo $e['id']; ?>" <?php echo $filtro_empleado==$e['id']?'selected':''; ?>><?php echo $e['nombre']; ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Obra</label>
+                    <select name="obra">
+                        <option value="">Todas</option>
+                        <?php foreach($obras as $o): ?>
+                        <option value="<?php echo $o['id']; ?>" <?php echo $filtro_obra==$o['id']?'selected':''; ?>><?php echo $o['nombre']; ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Máquina</label>
+                    <select name="maquina">
+                        <option value="">Todas</option>
+                        <?php foreach($maquinas as $m): ?>
+                        <option value="<?php echo $m['id']; ?>" <?php echo $filtro_maquina==$m['id']?'selected':''; ?>><?php echo $m['nombre']; ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Desde</label>
+                    <input type="date" name="fecha_inicio" value="<?php echo $filtro_fecha_inicio; ?>">
+                </div>
+                <div class="form-group">
+                    <label>Hasta</label>
+                    <input type="date" name="fecha_fin" value="<?php echo $filtro_fecha_fin; ?>">
+                </div>
+                <div class="form-group" style="display:flex;align-items:flex-end;">
+                    <button type="submit" class="btn" style="width:100%;">Aplicar</button>
+                </div>
+            </form>
         </div>
 
         <!-- Pestañas -->
         <div class="tabs">
             <button class="tab active" onclick="showTab('trabajos')">Trabajos</button>
             <button class="tab" onclick="showTab('gastos')">Gastos</button>
-            <button class="tab" onclick="showTab('resumen')">Resumen por Empleado</button>
+            <button class="tab" onclick="showTab('combustibles')">Combustible</button>
+            <button class="tab" onclick="showTab('incidentes')">Incidentes</button>
+            <button class="tab" onclick="showTab('asistencia')">Asistencia</button>
+            <button class="tab" onclick="showTab('resumen')">Por Empleado</button>
+            <button class="tab" onclick="showTab('por_obra')">Por Obra</button>
         </div>
 
         <!-- Tabla de Trabajos -->
@@ -265,8 +393,10 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
                             <th>Obra</th>
                             <th>Máquina</th>
                             <th>Horas</th>
+                            <th>Viáticos</th>
+                            <th>Adicional</th>
                             <th>Tipo</th>
-                            <th>Monto</th>
+                            <th>Total</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -279,8 +409,10 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
                             <td><?php echo htmlspecialchars($t['obra'] ?? '-'); ?></td>
                             <td><?php echo htmlspecialchars($t['maquina'] ?? '-'); ?></td>
                             <td><?php echo $t['horas_trabajadas']; ?></td>
+                            <td><?php echo fmt($t['viaticos'] ?? 0); ?></td>
+                            <td><?php echo fmt($t['adicionales'] ?? 0); ?></td>
                             <td><span class="badge badge-<?php echo $t['tipo_pago']; ?>"><?php echo strtoupper($t['tipo_pago']); ?></span></td>
-                            <td><?php echo fmt($t['monto']); ?> Gs</td>
+                            <td><strong><?php echo fmt($t['monto'] + ($t['viaticos'] ?? 0) + ($t['adicionales'] ?? 0)); ?></strong></td>
                         </tr>
                         <?php endforeach; endif; ?>
                     </tbody>
@@ -311,6 +443,102 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
                         <td><?php echo fmt($g['monto']); ?> Gs</td>
                     </tr>
                     <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Tabla de Combustibles -->
+        <div id="tab-combustibles" class="card" style="display: none;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                <h3>⛽ Combustible</h3>
+                <button class="btn" onclick="openModal('modal-nuevo-combustible')">+ Cargar</button>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Fecha</th>
+                        <th>Empleado</th>
+                        <th>Máquina</th>
+                        <th>Obra</th>
+                        <th>Litros</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($combustibles)): ?>
+                    <tr><td colspan="5" style="text-align: center; color: #8696a0;">No hay combustible registrado</td></tr>
+                    <?php else: foreach ($combustibles as $c): ?>
+                    <tr>
+                        <td><?php echo date('d/m', strtotime($c['fecha'])); ?></td>
+                        <td><?php echo htmlspecialchars($c['empleado']); ?></td>
+                        <td><?php echo htmlspecialchars($c['maquina'] ?? '-'); ?></td>
+                        <td><?php echo htmlspecialchars($c['obra'] ?? '-'); ?></td>
+                        <td><strong><?php echo number_format($c['litros'], 0, ',', '.'); ?> L</strong></td>
+                    </tr>
+                    <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Tabla de Incidentes -->
+        <div id="tab-incidentes" class="card" style="display: none;">
+            <h3>🚫 Incidentes / Días No Trabajados</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Fecha</th>
+                        <th>Empleado</th>
+                        <th>Tipo</th>
+                        <th>Máquina</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($incidentes)): ?>
+                    <tr><td colspan="4" style="text-align: center; color: #8696a0;">No hay incidentes registrados</td></tr>
+                    <?php else: foreach ($incidentes as $i): ?>
+                    <tr>
+                        <td><?php echo date('d/m', strtotime($i['fecha'])); ?></td>
+                        <td><?php echo htmlspecialchars($i['empleado']); ?></td>
+                        <td>
+                            <?php 
+                            $tipos = ['lluvia' => '🌧️ Lluvia', 'breakdown' => '🔧 Breakdown', 'mantenimiento' => '🔩 Mantenimiento', 'ausente' => '❌ Ausente'];
+                            echo $tipos[$i['tipo']] ?? $i['tipo']; 
+                            ?>
+                        </td>
+                        <td><?php echo htmlspecialchars($i['maquina'] ?? '-'); ?></td>
+                    </tr>
+                    <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Tabla de Asistencia -->
+        <div id="tab-asistencia" class="card" style="display: none;">
+            <h3>📅 Asistencia de Hoy (<?php echo date('d/m/Y'); ?>)</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Empleado</th>
+                        <th>Estado</th>
+                        <th>Hora Login</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($todos_empleados as $emp): 
+                        $asist = $asistencia_hoy[$emp['id']] ?? ['presente' => 0, 'login_hora' => null];
+                        $presente = $asist['presente'] ?? 0;
+                    ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($emp['nombre']); ?></td>
+                        <td>
+                            <?php if ($presente): ?>
+                            <span style="color: #4caf50; font-weight: bold;">✅ Presente</span>
+                            <?php else: ?>
+                            <span style="color: #f44336; font-weight: bold;">❌ Ausente</span>
+                            <?php endif; ?>
+                        </td>
+                        <td><?php echo $asist['login_hora'] ? date('H:i', strtotime($asist['login_hora'])) : '-'; ?></td>
+                    </tr>
+                    <?php endforeach; ?>
                 </tbody>
             </table>
         </div>
@@ -349,6 +577,34 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
                     </tr>
                     <?php endforeach; ?>
                     <?php if (empty($resumen)): ?>
+                    <tr><td colspan="4" style="text-align: center; color: #8696a0;">Sin datos</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Resumen por Obra -->
+        <div id="tab-por_obra" class="card" style="display: none;">
+            <h3>🏗️ Resumen por Obra</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Obra</th>
+                        <th>Horas</th>
+                        <th>Trabajos</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($por_obra as $o): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($o['nombre']); ?></td>
+                        <td><?php echo $o['horas']; ?></td>
+                        <td><?php echo count(array_filter($trabajos, fn($t) => $t['obra_id'] == array_search($o, $por_obra))); ?></td>
+                        <td><?php echo fmt($o['monto']); ?> Gs</td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($por_obra)): ?>
                     <tr><td colspan="4" style="text-align: center; color: #8696a0;">Sin datos</td></tr>
                     <?php endif; ?>
                 </tbody>
@@ -461,18 +717,142 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
                 <h3>🚜 Máquinas</h3>
                 <button onclick="closeModal('modal-maquina')" style="background:none;border:none;color:#fff;font-size:1.5rem;">&times;</button>
             </div>
+            <button class="btn" style="width:100%; margin-bottom:15px;" onclick="openModal('modal-nueva-maquina')">+ Nueva Máquina</button>
             <table>
-                <thead><tr><th>Nombre</th><th>Marca</th><th>Precio/Hora</th></tr></thead>
+                <thead><tr><th>Nombre</th><th>Marca</th><th>Precio/Hora</th><th>Estado</th><th></th></tr></thead>
                 <tbody>
                     <?php foreach ($maquinas as $m): ?>
                     <tr>
                         <td><?php echo htmlspecialchars($m['nombre']); ?></td>
                         <td><?php echo htmlspecialchars($m['marca']); ?></td>
-                        <td><?php echo fmt($m['precio_hora']); ?> Gs</td>
+                        <td><?php echo fmt($m['precio_hora']); ?></td>
+                        <td><?php echo $m['estado']; ?></td>
+                        <td>
+                            <button onclick="editarMaquina(<?php echo $m['id']; ?>, '<?php echo htmlspecialchars($m['nombre']); ?>', '<?php echo htmlspecialchars($m['marca']); ?>', '<?php echo htmlspecialchars($m['modelo'] ?? ''); ?>', '<?php echo htmlspecialchars($m['patente'] ?? ''); ?>', <?php echo $m['precio_hora']; ?>, <?php echo $m['precio_dia']; ?>, '<?php echo $m['estado']; ?>')" style="background:var(--primary);border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">✏️</button>
+                            <button onclick="eliminarMaquina(<?php echo $m['id']; ?>)" style="background:#ff5e5e;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">🗑️</button>
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <!-- Modal Nueva/Editar Máquina -->
+    <div id="modal-nueva-maquina" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="titulo-maquina">Nueva Máquina</h3>
+                <button onclick="closeModal('modal-nueva-maquina')" style="background:none;border:none;color:#fff;font-size:1.5rem;">&times;</button>
+            </div>
+            <form id="form-maquina">
+                <input type="hidden" name="id" id="maquina_id">
+                <div class="form-group">
+                    <label>Nombre</label>
+                    <input type="text" name="nombre" id="maquina_nombre" required>
+                </div>
+                <div class="form-group">
+                    <label>Marca</label>
+                    <input type="text" name="marca" id="maquina_marca">
+                </div>
+                <div class="form-group">
+                    <label>Modelo</label>
+                    <input type="text" name="modelo" id="maquina_modelo">
+                </div>
+                <div class="form-group">
+                    <label>Patente</label>
+                    <input type="text" name="patente" id="maquina_patente">
+                </div>
+                <div class="form-group">
+                    <label>Precio Hora (Gs)</label>
+                    <input type="number" name="precio_hora" id="maquina_precio_hora">
+                </div>
+                <div class="form-group">
+                    <label>Precio Día (Gs)</label>
+                    <input type="number" name="precio_dia" id="maquina_precio_dia">
+                </div>
+                <div class="form-group">
+                    <label>Estado</label>
+                    <select name="estado" id="maquina_estado">
+                        <option value="disponible">Disponible</option>
+                        <option value="alquilado">Alquilado</option>
+                        <option value="mantenimiento">Mantenimiento</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn" style="width:100%;">Guardar</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Obras -->
+    <div id="modal-obra" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🏗️ Obras</h3>
+                <button onclick="closeModal('modal-obra')" style="background:none;border:none;color:#fff;font-size:1.5rem;">&times;</button>
+            </div>
+            <button class="btn" style="width:100%; margin-bottom:15px;" onclick="openModal('modal-nueva-obra')">+ Nueva Obra</button>
+            <table>
+                <thead><tr><th>Nombre</th><th>Precio/Hora</th><th>Estado</th><th></th></tr></thead>
+                <tbody>
+                    <?php 
+                    $st = $pdo->query("SELECT o.*, c.nombre as cliente_nombre FROM obras o LEFT JOIN clientes c ON o.cliente_id = c.id ORDER BY o.nombre");
+                    $todas_obras = $st->fetchAll();
+                    foreach ($todas_obras as $o): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($o['nombre']); ?></td>
+                        <td><?php echo fmt($o['precio_hora']); ?></td>
+                        <td><?php echo $o['estado']; ?></td>
+                        <td>
+                            <button onclick="editarObra(<?php echo $o['id']; ?>, '<?php echo htmlspecialchars($o['nombre']); ?>', <?php echo $o['cliente_id']; ?>, <?php echo $o['precio_hora']; ?>, <?php echo $o['precio_dia']; ?>, '<?php echo $o['estado']; ?>')" style="background:var(--primary);border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">✏️</button>
+                            <button onclick="eliminarObra(<?php echo $o['id']; ?>)" style="background:#ff5e5e;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;">🗑️</button>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Modal Nueva/Editar Obra -->
+    <div id="modal-nueva-obra" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="titulo-obra">Nueva Obra</h3>
+                <button onclick="closeModal('modal-nueva-obra')" style="background:none;border:none;color:#fff;font-size:1.5rem;">&times;</button>
+            </div>
+            <form id="form-obra">
+                <input type="hidden" name="id" id="obra_id">
+                <div class="form-group">
+                    <label>Nombre de la Obra</label>
+                    <input type="text" name="nombre" id="obra_nombre" required>
+                </div>
+                <div class="form-group">
+                    <label>Cliente</label>
+                    <select name="cliente_id" id="obra_cliente">
+                        <?php foreach ($clientes as $c): ?>
+                        <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['nombre']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Precio Hora (Gs)</label>
+                    <input type="number" name="precio_hora" id="obra_precio_hora">
+                </div>
+                <div class="form-group">
+                    <label>Precio Día (Gs)</label>
+                    <input type="number" name="precio_dia" id="obra_precio_dia">
+                </div>
+                <div class="form-group">
+                    <label>Estado</label>
+                    <select name="estado" id="obra_estado">
+                        <option value="activa">Activa</option>
+                        <option value="pausada">Pausada</option>
+                        <option value="finalizada">Finalizada</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn" style="width:100%;">Guardar</button>
+            </form>
         </div>
     </div>
 
@@ -502,26 +882,109 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
         </div>
     </div>
 
-    <!-- Modal Empleados -->
-    <div id="modal-empleados" class="modal">
+    <!-- Modal Usuarios -->
+    <div id="modal-usuarios" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>👷 Empleados</h3>
-                <button onclick="closeModal('modal-empleados')" style="background:none;border:none;color:#fff;font-size:1.5rem;">&times;</button>
+                <h3>👷 Gestión de Usuarios</h3>
+                <button onclick="closeModal('modal-usuarios')" style="background:none;border:none;color:#fff;font-size:1.5rem;">&times;</button>
             </div>
+            <button class="btn" style="width:100%; margin-bottom:15px;" onclick="openModal('modal-nuevo-usuario')">+ Nuevo Usuario</button>
             <table>
-                <thead><tr><th>Nombre</th><th>Usuario</th><th>Teléfono</th><th>Estado</th></tr></thead>
+                <thead><tr><th>Nombre</th><th>Usuario</th><th>Teléfono</th><th>Rol</th><th>Estado</th><th></th></tr></thead>
                 <tbody>
                     <?php foreach ($empleados as $e): ?>
                     <tr>
                         <td><?php echo htmlspecialchars($e['nombre']); ?></td>
                         <td><?php echo htmlspecialchars($e['user_login']); ?></td>
-                        <td><?php echo htmlspecialchars($e['telefono']); ?></td>
-                        <td><?php echo $e['activo'] ? 'Activo' : 'Inactivo'; ?></td>
+                        <td><?php echo htmlspecialchars($e['telefono'] ?? ''); ?></td>
+                        <td><?php echo htmlspecialchars($e['rol']); ?></td>
+                        <td><?php echo $e['activo'] ? '✓' : '✕'; ?></td>
+                        <td><button onclick="editarUsuario(<?php echo $e['id']; ?>, '<?php echo htmlspecialchars($e['nombre']); ?>', '<?php echo htmlspecialchars($e['user_login']); ?>', '<?php echo htmlspecialchars($e['telefono'] ?? ''); ?>')" style="background:var(--primary);border:none;padding:5px 10px;border-radius:5px;cursor:pointer;">✏️</button></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <!-- Modal Nuevo/Editar Usuario -->
+    <div id="modal-nuevo-usuario" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="titulo-usuario">Nuevo Usuario</h3>
+                <button onclick="closeModal('modal-nuevo-usuario')" style="background:none;border:none;color:#fff;font-size:1.5rem;">&times;</button>
+            </div>
+            <form id="form-usuario" method="POST" action="api/guardar_usuario.php">
+                <input type="hidden" name="id" id="usuario_id">
+                <div class="form-group">
+                    <label>Nombre</label>
+                    <input type="text" name="nombre" id="usuario_nombre" required>
+                </div>
+                <div class="form-group">
+                    <label>Usuario (login)</label>
+                    <input type="text" name="user_login" id="usuario_login" required>
+                </div>
+                <div class="form-group">
+                    <label>Contraseña <span style="color:#8696a0">(dejar vacío para mantener)</span></label>
+                    <input type="password" name="password" id="usuario_password">
+                </div>
+                <div class="form-group">
+                    <label>Teléfono</label>
+                    <input type="text" name="telefono" id="usuario_telefono">
+                </div>
+                <div class="form-group">
+                    <label>Rol</label>
+                    <select name="rol" id="usuario_rol">
+                        <option value="empleado">Empleado</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn" style="width:100%;">Guardar</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Nuevo Combustible -->
+    <div id="modal-nuevo-combustible" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>⛽ Cargar Combustible</h3>
+                <button onclick="closeModal('modal-nuevo-combustible')" style="background:none;border:none;color:#fff;font-size:1.5rem;">&times;</button>
+            </div>
+            <form id="form-combustible" method="POST" action="api/guardar_combustible.php">
+                <div class="form-group">
+                    <label>Empleado</label>
+                    <select name="empleado_id" required>
+                        <option value="">Seleccionar...</option>
+                        <?php 
+                        $st = $pdo->query("SELECT id, nombre FROM usuarios WHERE rol = 'empleado' AND activo = 1 ORDER BY nombre");
+                        while ($emp = $st->fetch(PDO::FETCH_ASSOC)): ?>
+                        <option value="<?php echo $emp['id']; ?>"><?php echo htmlspecialchars($emp['nombre']); ?></option>
+                        <?php endwhile; ?>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Máquina</label>
+                    <select name="maquina_id">
+                        <option value="">Seleccionar...</option>
+                        <?php 
+                        $st = $pdo->query("SELECT id, nombre FROM maquinas WHERE activo = 1 ORDER BY nombre");
+                        while ($maq = $st->fetch(PDO::FETCH_ASSOC)): ?>
+                        <option value="<?php echo $maq['id']; ?>"><?php echo htmlspecialchars($maq['nombre']); ?></option>
+                        <?php endwhile; ?>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Fecha</label>
+                    <input type="date" name="fecha" value="<?php echo date('Y-m-d'); ?>" required>
+                </div>
+                <div class="form-group">
+                    <label>Litros</label>
+                    <input type="number" name="litros" step="0.01" required placeholder="Ej: 300">
+                </div>
+                <button type="submit" class="btn" style="width:100%;">Guardar</button>
+            </form>
         </div>
     </div>
 
@@ -594,8 +1057,141 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
             document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
             event.target.classList.add('active');
         }
+        function toggleFiltros() {
+            const f = document.getElementById('filtros-panel');
+            f.style.display = f.style.display === 'none' ? 'block' : 'none';
+        }
         function openModal(id) { document.getElementById(id).classList.add('active'); }
         function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+        
+        function editarUsuario(id, nombre, login, telefono) {
+            document.getElementById('titulo-usuario').innerText = 'Editar Usuario';
+            document.getElementById('usuario_id').value = id;
+            document.getElementById('usuario_nombre').value = nombre;
+            document.getElementById('usuario_login').value = login;
+            document.getElementById('usuario_password').value = '';
+            document.getElementById('usuario_telefono').value = telefono || '';
+            document.getElementById('usuario_rol').value = 'empleado';
+            openModal('modal-nuevo-usuario');
+        }
+        
+        document.getElementById('form-usuario').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const res = await fetch('api/guardar_usuario.php', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert(data.message);
+            }
+        });
+        
+        document.getElementById('form-combustible').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const res = await fetch('api/guardar_combustible.php', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert(data.message);
+            }
+        });
+        
+        // Máquinas
+        function editarMaquina(id, nombre, marca, modelo, patente, precio_hora, precio_dia, estado) {
+            document.getElementById('titulo-maquina').innerText = 'Editar Máquina';
+            document.getElementById('maquina_id').value = id;
+            document.getElementById('maquina_nombre').value = nombre;
+            document.getElementById('maquina_marca').value = marca;
+            document.getElementById('maquina_modelo').value = modelo;
+            document.getElementById('maquina_patente').value = patente;
+            document.getElementById('maquina_precio_hora').value = precio_hora;
+            document.getElementById('maquina_precio_dia').value = precio_dia;
+            document.getElementById('maquina_estado').value = estado;
+            openModal('modal-nueva-maquina');
+        }
+        
+        document.getElementById('form-maquina').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const res = await fetch('api/guardar_maquina.php', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert(data.message);
+            }
+        });
+        
+        async function eliminarMaquina(id) {
+            if (!confirm('¿Eliminar esta máquina?')) return;
+            const formData = new FormData();
+            formData.append('id', id);
+            formData.append('action', 'delete');
+            const res = await fetch('api/guardar_maquina.php', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            alert(data.message);
+            location.reload();
+        }
+        
+        // Obras
+        function editarObra(id, nombre, cliente_id, precio_hora, precio_dia, estado) {
+            document.getElementById('titulo-obra').innerText = 'Editar Obra';
+            document.getElementById('obra_id').value = id;
+            document.getElementById('obra_nombre').value = nombre;
+            document.getElementById('obra_cliente').value = cliente_id;
+            document.getElementById('obra_precio_hora').value = precio_hora;
+            document.getElementById('obra_precio_dia').value = precio_dia;
+            document.getElementById('obra_estado').value = estado;
+            openModal('modal-nueva-obra');
+        }
+        
+        document.getElementById('form-obra').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const res = await fetch('api/guardar_obra.php', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert(data.message);
+            }
+        });
+        
+        async function eliminarObra(id) {
+            if (!confirm('¿Eliminar esta obra?')) return;
+            const formData = new FormData();
+            formData.append('id', id);
+            formData.append('action', 'delete');
+            const res = await fetch('api/guardar_obra.php', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            alert(data.message);
+            location.reload();
+        }
     </script>
 </body>
 </html>
