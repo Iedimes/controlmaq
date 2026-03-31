@@ -83,6 +83,8 @@ try {
         if (!is_dir($upload_dir)) mkdir($upload_dir, 0755, true);
         
         if (move_uploaded_file($file['tmp_name'], $upload_dir . $filename)) {
+            $imageUrl = 'uploads/' . $filename;
+            
             if (!isset($_SESSION['horom_inicial'])) {
                 $_SESSION['ultima_foto'] = 'inicial';
                 $resp = "📷 *Foto del horómetro INICIAL*\n\n¿Cuál es el horómetro inicial?";
@@ -90,7 +92,7 @@ try {
                 $_SESSION['ultima_foto'] = 'final';
                 $resp = "📷 *Foto del horómetro FINAL*\n\n¿Cuál es el horómetro final?";
             }
-            echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => false, "lang" => "es"]);
+            echo json_encode(["status" => "success", "mensaje" => $resp, "imagen" => $imageUrl, "read_aloud" => false, "lang" => "es"]);
             exit;
         }
     }

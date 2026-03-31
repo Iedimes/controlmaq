@@ -230,12 +230,25 @@ $nombre = $_SESSION['nombre'] ?? 'Usuario';
                 add("Error de servidor", "in"); 
             }
         }
-        function add(t, c, isHtml = false) {
+        function add(t, c, isHtml = false, isImage = false) {
             const d = document.getElementById('chat'), m = document.createElement('div');
             m.className = 'msg ' + c; 
-            if (isHtml) m.innerHTML = t; else m.innerText = t;
+            if (isImage) {
+                m.innerHTML = '<img src="' + t + '" onclick="openImage(this.src)" style="max-width:200px;max-height:200px;border-radius:8px;cursor:pointer;">';
+            } else if (isHtml) {
+                m.innerHTML = t; 
+            } else {
+                m.innerText = t;
+            }
             d.appendChild(m); 
             d.scrollTop = d.scrollHeight;
+        }
+        
+        function openImage(src) {
+            const modal = document.createElement('div');
+            modal.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+            modal.innerHTML = '<div style="position:absolute;top:10px;right:20px;color:white;font-size:30px;cursor:pointer;" onclick="this.parentElement.remove()">✕</div><img src="' + src + '" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;">';
+            document.body.appendChild(modal);
         }
         
         async function sendImage() {
@@ -243,7 +256,12 @@ $nombre = $_SESSION['nombre'] ?? 'Usuario';
             const file = input.files[0];
             if (!file) return;
             
-            add('📷 Foto enviada', 'out');
+            // Show preview immediately (like WhatsApp)
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                add(e.target.result, 'out', false, true);
+            };
+            reader.readAsDataURL(file);
             
             const formData = new FormData();
             formData.append('imagen', file);
@@ -256,6 +274,13 @@ $nombre = $_SESSION['nombre'] ?? 'Usuario';
                     body: formData
                 });
                 const d = await r.json();
+                if (d.imagen) {
+                    // Replace the preview with actual uploaded image
+                    const msgs = document.querySelectorAll('.msg.out img');
+                    if (msgs.length > 0) {
+                        msgs[msgs.length - 1].src = d.imagen;
+                    }
+                }
                 add(d.mensaje || d.error || 'Error', 'in', true);
             } catch (e) {
                 add("Error al procesar imagen", 'in');
