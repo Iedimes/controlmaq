@@ -3,6 +3,15 @@
  * Panel de Control - Planilla Central
  */
 session_start();
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Pragma: no-cache");
+
+if (isset($_GET['logout'])) {
+    session_unset();
+    session_destroy();
+    header("Location: index.php");
+    exit;
+}
 
 require_once __DIR__ . '/config.php';
 
@@ -272,7 +281,7 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
         <div class="user-info">
             <button onclick="toggleChat()" style="background:none;border:none;color:var(--primary);font-size:1.2rem;cursor:pointer;margin-right:10px;"><i class="fas fa-comments"></i></button>
             <span style="font-size: 0.85rem;"><?php echo htmlspecialchars($nombre); ?></span>
-            <a href="index.php?logout=1" style="color: #8696a0;"><i class="fas fa-sign-out-alt"></i></a>
+            <a href="index.php?logout=1" style="color: #8696a0; cursor: pointer;" onclick="return confirm('¿Querés salir?')"><i class="fas fa-sign-out-alt"></i></a>
         </div>
     </header>
 

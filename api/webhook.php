@@ -528,30 +528,52 @@ if (($confirm['type'] ?? '') === 'combustible' && ($confirm['step'] ?? '') === '
             $st = $pdo->query("SELECT SUM(litros) as c FROM combustibles WHERE fecha = CURDATE()");
             $c = $st->fetch();
             
+            $st = $pdo->query("SELECT COUNT(*) as cnt FROM incidentes WHERE fecha = CURDATE()");
+            $inc = $st->fetch();
+            
             $horas = $r['h'] ?? 0;
             $trabajos = $r['m'] ?? 0;
             $gastos = $g['g'] ?? 0;
             $combustible = $c['c'] ?? 0;
+            $incidentes = $inc['cnt'] ?? 0;
             $neto = $trabajos - $gastos;
             
-            $resp = "📊 *Resumen GENERAL de Hoy*\n\n";
-            $resp .= "⏱️ Horas: $horas\n";
-            $resp .= "💰 Trabajos: " . number_format($trabajos, 0, ',', '.') . " Gs\n";
-            $resp .= "💸 Gastos: " . number_format($gastos, 0, ',', '.') . " Gs\n";
-            $resp .= "⛽ Combustible: " . number_format($combustible, 0, ',', '.') . " L\n";
-            $resp .= "✅ Neto: " . number_format($neto, 0, ',', '.') . " Gs";
+            $resp = "📊 *RESUMEN GENERAL - HOY*\n\n";
+            $resp .= "⏱️ *Horas trabajadas:* $horas\n";
+            $resp .= "💰 *Ingresos por trabajos:* " . number_format($trabajos, 0, ',', '.') . " Gs\n";
+            $resp .= "💸 *Gastos registrados:* " . number_format($gastos, 0, ',', '.') . " Gs\n";
+            $resp .= "⛽ *Combustible cargado:* " . number_format($combustible, 0, ',', '.') . " L\n";
+            $resp .= "🚫 *Incidentes:* $incidentes\n";
+            $resp .= "✅ *NETO:* " . number_format($neto, 0, ',', '.') . " Gs";
             
             // Agregar detalle por empleado
-            $st = $pdo->query("SELECT u.nombre, SUM(t.horas_trabajadas) as h, SUM(t.monto) as m 
+            $st = $pdo->query("SELECT u.nombre, SUM(t.horas_trabajadas) as h, SUM(t.monto) as m, SUM(g.monto) as gast
                 FROM trabajos t 
-                LEFT JOIN usuarios u ON t.empleado_id = u.id 
+                LEFT JOIN usuarios u ON t.empleado_id = u.id
+                LEFT JOIN gastos g ON g.empleado_id = u.id AND g.fecha = CURDATE()
                 WHERE t.fecha = CURDATE() 
                 GROUP BY u.nombre");
             $por_empleado = $st->fetchAll();
             if (!empty($por_empleado)) {
-                $resp .= "\n\n👥 *Por Empleado:*";
+                $resp .= "\n\n👥 *POR EMPLEADO:*";
                 foreach ($por_empleado as $e) {
-                    $resp .= "\n• {$e['nombre']}: {$e['h']}hs = " . number_format($e['m'], 0, ',', '.') . " Gs";
+                    $gasto_emp = $e['gast'] ?? 0;
+                    $neto_emp = $e['m'] - $gasto_emp;
+                    $resp .= "\n• {$e['nombre']}: {$e['h']}hs → " . number_format($e['m'], 0, ',', '.') . " Gs (gastos: " . number_format($gasto_emp, 0, ',', '.') . " Gs)";
+                }
+            }
+            
+            // Agregar detalle por obra
+            $st = $pdo->query("SELECT o.nombre, SUM(t.horas_trabajadas) as h, SUM(t.monto) as m
+                FROM trabajos t 
+                LEFT JOIN obras o ON t.obra_id = o.id
+                WHERE t.fecha = CURDATE() 
+                GROUP BY o.nombre");
+            $por_obra = $st->fetchAll();
+            if (!empty($por_obra)) {
+                $resp .= "\n\n🏗️ *POR OBRA:*";
+                foreach ($por_obra as $o) {
+                    $resp .= "\n• {$o['nombre']}: {$o['h']}hs = " . number_format($o['m'], 0, ',', '.') . " Gs";
                 }
             }
             
@@ -567,12 +589,38 @@ if (($confirm['type'] ?? '') === 'combustible' && ($confirm['step'] ?? '') === '
             $st->execute([$u_id]);
             $g = $st->fetch();
             
+            $st = $pdo->prepare("SELECT SUM(litros) as c FROM combustibles WHERE fecha = CURDATE() AND empleado_id = ?");
+            $st->execute([$u_id]);
+            $c = $st->fetch();
+            
             $horas = $r['h'] ?? 0;
             $trabajos = $r['m'] ?? 0;
             $gastos = $g['g'] ?? 0;
+            $combustible = $c['c'] ?? 0;
             $neto = $trabajos - $gastos;
             
-            $resp = "📊 *Resumen de Hoy*\n\n⏱️ Horas: $horas\n💰 Trabajos: " . number_format($trabajos, 0, ',', '.') . " Gs\n💸 Gastos: " . number_format($gastos, 0, ',', '.') . " Gs\n✅ Neto: " . number_format($neto, 0, ',', '.') . " Gs";
+            $resp = "📊 *Resumen de Hoy*\n\n";
+            $resp .= "⏱️ Horas trabajadas: $horas\n";
+            $resp .= "💰 Ingreso por trabajos: " . number_format($trabajos, 0, ',', '.') . " Gs\n";
+            $resp .= "💸 Gastos realizados: " . number_format($gastos, 0, ',', '.') . " Gs\n";
+            $resp .= "⛽ Combustible: " . number_format($combustible, 0, ',', '.') . " L\n";
+            $resp .= "✅ Neto: " . number_format($neto, 0, ',', '.') . " Gs";
+            
+            // Detalle de trabajos
+            $st = $pdo->prepare("SELECT t.horas_trabajadas, t.monto, o.nombre as obra, m.nombre as maquina 
+                FROM trabajos t 
+                LEFT JOIN obras o ON t.obra_id = o.id
+                LEFT JOIN maquinas m ON t.maquina_id = m.id
+                WHERE t.fecha = CURDATE() AND t.empleado_id = ?");
+            $st->execute([$u_id]);
+            $mis_trabajos = $st->fetchAll();
+            if (!empty($mis_trabajos)) {
+                $resp .= "\n\n📋 *Trabajos:*";
+                foreach ($mis_trabajos as $t) {
+                    $resp .= "\n• {$t['horas_trabajadas']}hs en {$t['obra']} ({$t['maquina']}): " . number_format($t['monto'], 0, ',', '.') . " Gs";
+                }
+            }
+            
             echo json_encode(["status" => "success", "mensaje" => $resp, "read_aloud" => true, "lang" => "es"]);
             exit;
         }
