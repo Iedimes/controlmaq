@@ -3,6 +3,8 @@
  * ControlMaq - Control de Alquiler de Máquinas
  */
 session_start();
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Pragma: no-cache");
 
 require_once __DIR__ . '/config.php';
 
@@ -16,8 +18,11 @@ class Auth {
         return isset($_SESSION['usuario_id']);
     }
     public static function logout() {
-        session_unset();
-        session_destroy();
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+            session_unset();
+            session_destroy();
+        }
         header("Location: ./");
         exit;
     }
