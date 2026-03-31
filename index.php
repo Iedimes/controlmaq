@@ -151,13 +151,9 @@ $nombre = $_SESSION['nombre'] ?? 'Usuario';
         <?php if ($es_admin): ?>
         <div class="msg in">
             ¡Hola <?php echo htmlspecialchars(explode(' ', $nombre)[0]); ?>! 👋<br><br>
-            Comandos:<br>
+            Comandos disponibles:<br>
             • <i>"Resumen" - Balance de hoy</i><br>
-            • <i>"Mis trabajos" - Ver trabajos</i><br>
-            • <i>"Nueva obra [nombre]"</i><br>
-            • <i>"Nueva máquina [nombre]"</i><br>
-            • <i>"Eliminar obra [nombre]"</i><br>
-            • <i>"Eliminar máquina [nombre]"</i>
+            • <i>"Mis trabajos" - Ver trabajos de hoy</i>
         </div>
         <?php else: ?>
         <div class="msg in">
@@ -166,7 +162,6 @@ $nombre = $_SESSION['nombre'] ?? 'Usuario';
             • <i>"Trabajé 8 horas"</i> - Registrar horas<br>
             • <i>"Gasté 200000"</i> - Registrar gasto<br>
             • <i>"Cargué 300 litros"</i> - Cargar combustible<br>
-            • <i>"Cambié de máquina"</i> - Cambiar máquina/obra<br>
             • <i>"Llovió hoy"</i> - Registrar lluvia<br>
             • <i>"No trabajé"</i> - Registrar ausencia<br>
             • <i>"Resumen"</i> - Ver balance del día<br>
