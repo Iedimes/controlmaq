@@ -124,6 +124,25 @@ $nombre = $_SESSION['nombre'] ?? 'Usuario';
         .input-wrap { flex: 1; background: #2a3942; border-radius: 25px; padding: 2px 15px; display: flex; align-items: center; }
         #msg-input { flex: 1; background: transparent; border: none; color: white; padding: 10px; outline: none; font-size: 16px; }
         .btn-send { width: 42px; height: 42px; background: var(--primary); color: #0b141a; border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        
+        @media (max-width: 600px) {
+            header { padding: 10px 12px; }
+            #chat { height: calc(100vh - 120px); padding: 12px 10px; }
+            .msg { font-size: 0.85rem; padding: 8px 12px; max-width: 90%; }
+            .footer-bar { padding: 8px 10px; gap: 8px; }
+            #msg-input { padding: 8px; font-size: 15px; }
+            .btn-send { width: 40px; height: 40px; }
+            .login-card { padding: 1.5rem; }
+            .login-card input { padding: 10px; font-size: 15px; }
+            .login-card button { padding: 10px; }
+        }
+        
+        @media (max-width: 400px) {
+            header { flex-wrap: wrap; gap: 8px; justify-content: center; }
+            header > div:first-child { width: 100%; text-align: center; margin-bottom: 5px; }
+            #chat { height: calc(100vh - 140px); }
+            .msg { font-size: 0.8rem; }
+        }
     </style>
 </head>
 <body>

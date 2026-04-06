@@ -266,6 +266,26 @@ function fmt($n) { return number_format($n, 0, ',', '.'); }
             header { padding: 10px 12px; }
             .logo-icon { width: 34px; height: 34px; font-size: 1rem; }
             #chat-panel { width: calc(100% - 30px); right:15px; bottom:60px; height:350px; }
+            table { font-size: 0.75rem; }
+            th, td { padding: 6px 4px; }
+            .tabs { flex-wrap: wrap; gap: 5px; }
+            .tab { padding: 8px 10px; font-size: 0.8rem; }
+            h3 { font-size: 1rem; }
+            .form-group { margin-bottom: 10px; }
+            .form-group input, .form-group select { padding: 8px; font-size: 0.9rem; }
+            .btn { padding: 10px; font-size: 0.9rem; }
+            .modal-content { padding: 15px; margin: 10px; }
+            .logo { gap: 8px; }
+            .logo-icon { width: 32px; height: 32px; }
+            .user-info { gap: 8px; }
+        }
+        
+        @media (max-width: 400px) {
+            .stats { grid-template-columns: 1fr; }
+            .tab { flex: 1 1 45%; text-align: center; }
+            header { flex-wrap: wrap; gap: 8px; }
+            .logo { flex: 1 1 100%; justify-content: center; }
+            .user-info { flex: 1 1 100%; justify-content: center; }
         }
     </style>
 </head>
